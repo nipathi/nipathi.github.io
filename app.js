@@ -61,68 +61,92 @@
   }
   showPanel(null);
 
-  /* ---------- 3D with graceful fallback ---------- */
-  var canvas = $("#uni"), stage = $("#stage"), boot = $("#boot");
-  try {
-    uni = new window.Universe(canvas, D, {
-      reduceMotion: reduce, lowPower: low,
-      onSelect: function (n) { showPanel(n ? n.key : null); }
-    });
-    canvas.style.cursor = "grab";
-    uni.kick();
-    setTimeout(function () { if (boot) boot.classList.add("gone"); }, 150);
-    if (reduce) $("#hint").textContent = "Motion reduced · drag or use the buttons below";
-  } catch (err) {
-    stage.classList.add("nofx");
-    if (boot) boot.remove();
-    $("#hint").textContent = "";
-  }
-
-  /* ---------- routing between home and case studies ---------- */
-  var cases = $$(".case"), home = $("#home");
-  var baseTitle = document.title;
-  function route() {
-    var h = decodeURIComponent((location.hash || "").slice(1));
-    var c = h.indexOf("case-") === 0 ? document.getElementById(h) : null;
-    cases.forEach(function (x) { x.hidden = x !== c; });
-    home.hidden = !!c;
-    if (c) {
-      document.title = (caseTitle[h.slice(5)] || "Case study") + " | Nipathi Ranj K";
-      window.scrollTo(0, 0);
-      var t = $("h1", c); if (t) t.focus({ preventScroll: true });
-    } else {
-      document.title = baseTitle;
-      if (h && document.getElementById(h)) {
-        var el = document.getElementById(h);
-        requestAnimationFrame(function () { el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }); });
-      } else if (!h) { window.scrollTo(0, 0); }
+  /* ---------- 3D with graceful fallback (starts the first time the Skills scene opens) ---------- */
+  var canvas = $("#uni"), stage = $("#stage"), boot = $("#boot"), uniTried = false;
+  function initUniverse() {
+    if (uniTried) return; uniTried = true;
+    try {
+      uni = new window.Universe(canvas, D, {
+        reduceMotion: reduce, lowPower: low,
+        onSelect: function (n) { showPanel(n ? n.key : null); }
+      });
+      canvas.style.cursor = "grab";
+      uni.kick();
+      setTimeout(function () { if (boot) boot.classList.add("gone"); }, 150);
+      if (reduce) $("#hint").textContent = "Motion reduced · drag or use the buttons";
+    } catch (err) {
+      stage.classList.add("nofx");
+      if (boot) boot.remove();
+      $("#hint").textContent = "";
     }
-    if (uni) uni.kick();
   }
-  /* links that must leave a case study and land on a home section */
-  $$("[data-home]").forEach(function (a) {
-    a.addEventListener("click", function () {
-      if (home.hidden) { setTimeout(route, 0); }
-    });
-  });
-  window.addEventListener("hashchange", route);
-  route();
 
-  /* ---------- scroll progress and active section ---------- */
-  var bar = $("#progress"), links = $$(".nav nav a");
-  var secs = ["work", "skills", "journey", "contact"].map(function (id) { return document.getElementById(id); });
-  var ticking = false;
-  function onScroll() {
-    if (ticking) return; ticking = true;
-    requestAnimationFrame(function () {
-      var h = document.documentElement, max = h.scrollHeight - h.clientHeight;
-      bar.style.transform = "scaleX(" + (max > 0 ? Math.min(1, h.scrollTop / max) : 0) + ")";
-      var cur = null;
-      if (!home.hidden) secs.forEach(function (s) { if (s && s.getBoundingClientRect().top < window.innerHeight * 0.4) cur = s.id; });
-      links.forEach(function (a) { var on = a.getAttribute("href") === "#" + cur; if (on) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
-      ticking = false;
-    });
+  /* ---------- scenes: one view at a time, joined by a crossing wipe ---------- */
+  var order = ["home", "about", "work", "skills", "journey", "contact"];
+  var label = { home: "Home", about: "About", work: "Work", skills: "Skills", journey: "Journey", contact: "Contact" };
+  var alias = { top: "home", interests: "about" };
+  var scenes = {}; order.forEach(function (id) { scenes[id] = document.getElementById(id); });
+  var cases = $$(".case"), baseTitle = document.title;
+  var cross = $("#cross"), body = document.body;
+  var current = null, busy = false;
+  var navLinks = $$(".nav nav a"), dots = $$(".rail-dots a");
+  var prevA = $("#railPrev"), nextA = $("#railNext");
+
+  function target() {
+    var h = decodeURIComponent((location.hash || "").slice(1));
+    if (alias[h]) h = alias[h];
+    if (h.indexOf("case-") === 0 && document.getElementById(h)) return h;
+    return scenes[h] ? h : "home";
   }
-  window.addEventListener("scroll", onScroll, { passive: true });
-  onScroll();
+  function show(id) {
+    var isCase = id.indexOf("case-") === 0;
+    order.forEach(function (k) { scenes[k].classList.toggle("on", k === id); });
+    cases.forEach(function (c) { c.hidden = c.id !== id; });
+    body.classList.toggle("in-case", isCase);
+    var focusEl;
+    if (isCase) {
+      document.title = (caseTitle[id.slice(5)] || "Case study") + " | Nipathi Ranj K";
+      focusEl = $("h1", document.getElementById(id));
+    } else {
+      document.title = id === "home" ? baseTitle : label[id] + " | Nipathi Ranj K";
+      focusEl = $("h1, h2", scenes[id]); if (focusEl && !focusEl.hasAttribute("tabindex")) focusEl.setAttribute("tabindex", "-1");
+    }
+    window.scrollTo(0, 0);
+    if (focusEl) focusEl.focus({ preventScroll: true });
+    if (id === "skills") { initUniverse(); if (uni) uni.kick(); }
+    if (window.OrbitHero) { if (id === "home") window.OrbitHero.start(); }
+    /* rail and header state; a case study counts as part of Work */
+    var at = isCase ? "work" : id, i = order.indexOf(at);
+    dots.forEach(function (a) { if (a.getAttribute("data-s") === at) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+    navLinks.forEach(function (a) { if (a.getAttribute("href") === "#" + at) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+    var p = order[(i + order.length - 1) % order.length], n = order[(i + 1) % order.length];
+    prevA.setAttribute("href", "#" + p); prevA.setAttribute("aria-label", "Previous scene: " + label[p]);
+    nextA.setAttribute("href", "#" + n); $("span", nextA).textContent = label[n]; nextA.setAttribute("aria-label", "Next scene: " + label[n]);
+    current = id;
+  }
+  function route(first) {
+    var t = target();
+    if (t === current) return;
+    if (first || reduce || current === null) { body.classList.toggle("first", !!first); show(t); return; }
+    if (busy) return;
+    body.classList.remove("first");
+    busy = true;
+    cross.classList.remove("run"); void cross.offsetWidth; cross.classList.add("run");
+    setTimeout(function () { show(target()); }, 560);
+    setTimeout(function () { cross.classList.remove("run"); busy = false; if (target() !== current) route(); }, 1000);
+  }
+  window.addEventListener("hashchange", function () { route(false); });
+  route(true);
+  setTimeout(function () { body.classList.remove("first"); }, 1500);
+
+  /* arrow keys move between scenes when nothing else has focus */
+  document.addEventListener("keydown", function (e) {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    var ae = document.activeElement;
+    if (ae && ae !== document.body && !(ae.tagName === "H1" || ae.tagName === "H2")) return;
+    if (current && current.indexOf("case-") === 0) return;
+    var i = order.indexOf(current);
+    if (e.key === "ArrowRight") { location.hash = order[Math.min(order.length - 1, i + 1)]; }
+    else if (e.key === "ArrowLeft") { location.hash = order[Math.max(0, i - 1)]; }
+  });
 })();
